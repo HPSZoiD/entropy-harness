@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+
+# Runtime inputs and generated ledgers
+questions/
+*.jsonl
+run_report.json
+site_data.json
+
+# Local secrets
+.env
+.env.*
