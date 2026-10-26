@@ -1,6 +1,6 @@
 """
-codepractice pipeline — STAGE 2: Groq Speed-Run (Fire-and-Triage Edition)
-Parallel execution across API keys, no retries (failures go to triage.jsonl).
+CodePractice pipeline — STAGE 2: Groq Speed-Run (Fire-and-Triage Edition)
+5 API keys, parallel execution, no retries (failures go to triage.jsonl).
 deps: pip install openai
 """
 import json, os, re, subprocess, sys, tempfile, time
@@ -28,7 +28,7 @@ MODEL = "openai/gpt-oss-120b"
 SLEEP_BETWEEN_CALLS = 20 
 
 # ---------------- prompts ----------------
-SOLVE_CODE = """You are completing a Python exercise on codepractice. Input JSON: left_panel, starter_code, filename, mode.
+SOLVE_CODE = """You are completing a Python exercise on CodePractice. Input JSON: left_panel, starter_code, filename, mode.
 mode="fragment": return ONLY the code that replaces the placeholder comment line(s).
 mode="full": return the COMPLETE program: every starter line verbatim in order, with each placeholder comment replaced by your code.
 Hard rules:
@@ -38,17 +38,39 @@ Hard rules:
 4. Generic logic; hidden tests exist.
 5. Read input only if not already read.
 6. If samples are missing, derive tests from Input/Output Format bullets.
+7. SAMPLE COMPLETENESS: A sample test case is COMPLETE only if its transcript runs from the first input prompt to the program's final output line (the terminator that complete cases end with, e.g. "Exiting the program"). Derive whole-run tests ONLY from complete cases. If several sample cases exist and some are cut off mid-interaction or marked [TRUNCATED], DROP the truncated ones entirely for whole-run test derivation. A truncated case may only contribute isolated edge-case expectations (e.g. "Invalid index" for an out-of-range index) when the fragment itself shows a complete prompt->output segment. If no complete case exists, derive ALL tests from the Input/Output rules instead. Never shorten an expected stdout just to match a cut-off transcript.
+8. HINT LINES: starter may contain invalid placeholder lines (e.g. `x = {num, for}`, `my_set = { for i in ... }`, bare `...`). These are NOT locked lines. Replace every hint line with real code or delete it; never emit a line that is a syntax error. The final merged program MUST compile.
 Thinking rules: reason in AT MOST 6 sentences, decide each point once, never revisit. Then emit the JSON object as the very first thing in your reply content.
 Return ONLY JSON: {"code": str, "tests": [{"stdin": str, "stdout": str}], "why": str}"""
 
-SOLVE_MCQ = """You are answering a codepractice MCQ. Input JSON fields: left_panel (theory + question verbatim), options (answer labels verbatim).
-Pick exactly one option. Return ONLY JSON: {"answer": str (copy one option verbatim), "why": str (one sentence)}"""
+SOLVE_MCQ = """You are answering a CodePractice-style MCQ. Input JSON fields: left_panel (theory + question verbatim), options (answer labels verbatim).
+The question may require ONE or MULTIPLE correct options (checkboxes, "select all that apply", "which of the following are"). Return EVERY correct option.
+Return ONLY JSON: {"answers": [str] (each copied verbatim from options; a list of length 1 if single-answer), "why": str (one sentence)}"""
 
-TESTGEN = """Given a codepractice problem statement (left_panel) and a finished program (code), produce the exact console tests. For each visible Sample Input/Output copy stdin/stdout verbatim. If none visible, derive from Input/Output Format bullets. expected stdout is what a PIPED run prints: include the input() prompt text (e.g. "num: ") but NOT the typed value. Return ONLY JSON: {"tests": [{"stdin": str, "stdout": str}]}"""
+TESTGEN = """Given a CodePractice problem statement (left_panel) and a finished program (code), produce the exact console tests. For each visible Sample Input/Output copy stdin/stdout verbatim. If none visible, derive from Input/Output Format bullets. expected stdout is what a PIPED run prints: include the input() prompt text (e.g. "num: ") but NOT the typed value. SAMPLE COMPLETENESS: A sample test case is COMPLETE only if its transcript runs from the first input prompt to the program's final output line (the terminator that complete cases end with, e.g. "Exiting the program"). Derive whole-run tests ONLY from complete cases. If several sample cases exist and some are cut off mid-interaction or marked [TRUNCATED], DROP the truncated ones entirely for whole-run test derivation. A truncated case may only contribute isolated edge-case expectations (e.g. "Invalid index" for an out-of-range index) when the fragment itself shows a complete prompt->output segment. If no complete case exists, derive ALL tests from the Input/Output rules instead. Never shorten an expected stdout just to match a cut-off transcript. Return ONLY JSON: {"tests": [{"stdin": str, "stdout": str}]}"""
+
+REFEREE = """You are a forensic test reviewer. A sandbox pipeline derived tests from a problem's sample transcript, and a logically plausible program fails them. Either the CODE or the TESTS is wrong; sample transcripts may contain authoring or OCR errors (wrong index values, impossible expected lists, stray whitespace).
+Using Python semantics, decide which side is wrong. Return ONLY JSON: {"wrong": "code"|"tests", "corrected_tests": [{"stdin": str, "stdout": str}] or null, "corrected_code": str or null, "verdict": str (one sentence)}"""
 
 # ---------------- helpers ----------------
 COMMENT_RE = re.compile(r"^\s*#")
 MATCH_RE   = re.compile(r"^\s*(match\b.*:\s*$|case\b.*:\s*$|if\b.*\(\s*\)\s*:|elif\b.*\(\s*\)\s*:|else\s*:\s*|.*(\.\.\.|\*\*|___))")
+HINT_RE    = re.compile(r"^\s*\w+\s*=\s*\{[^}]*\bfor\b[^}]*\}\s*$")
+
+def starter_compiles(st):
+    try:
+        compile(st, "<starter>", "exec"); return True
+    except SyntaxError:
+        return False
+
+def _line_compiles(l):
+    try:
+        compile(l, "<line>", "exec"); return True
+    except SyntaxError:
+        return False
+
+def is_hint_line(l):
+    return bool(HINT_RE.match(l)) and not _line_compiles(l)
 
 def detect_mode(starter: str) -> str:
     lines = (starter or "").split("\n")
@@ -96,66 +118,77 @@ def echo_split(got_lines, exp_lines, panel):
         return False
     return True
 
-def transcript_variants(exp_lines, stdin_data):
-    """Expected written as a console transcript: the typed value sits on the prompt line
-    ('marks: 78' + 'distinction') while a piped run prints 'marks: distinction'.
-    Strip the stdin value (never platform text) and merge with the next line."""
-    vals = [v.strip() for v in (stdin_data or "").splitlines() if v.strip()]
-    if not vals:
-        return []
-    v = vals[0]
-    out, i = [], 0
-    while i < len(exp_lines):
-        r = exp_lines[i].rstrip()
-        if v and r.endswith(v) and r[:-len(v)].strip():
-            prefix = r[:-len(v)]
-            if i + 1 < len(exp_lines):
-                out.append(prefix + exp_lines[i + 1].lstrip())
-                i += 2
-                continue
-            out.append(prefix)
-        else:
-            out.append(exp_lines[i])
-        i += 1
-    return [out] if out != exp_lines else []
+def canon_lines(lines, stdin_vals):
+    vals = [v.strip() for v in stdin_vals if v and v.strip()]
+    out = []
+    for ln in lines:
+        if ln.strip() in vals:                      # pure echoed-input line -> drop
+            continue
+        s = ln
+        for v in vals:                              # "prompt: value" -> "prompt: "
+            if v and s.rstrip().endswith(v):
+                s = s[:len(s) - len(v)]
+        out.append(s)
+    res, i = [], 0
+    while i < len(out):                             # bare prompts glue to next output line
+        chunk = [out[i]]
+        while chunk[-1].rstrip().endswith(":") and i + 1 < len(out):
+            i += 1
+            chunk.append(out[i])
+        res.append("".join(chunk)); i += 1
+    return [re.sub(r":(?=\S)", ": ", l).rstrip() for l in res]
+
+def compare_lines(gl, el, sv, panel):
+    gin, ein = [l.rstrip() for l in gl], [l.rstrip() for l in el]
+    if gin == ein:                                       cmp_mode = "strict"
+    elif echo_split(gl, el, panel):                      cmp_mode = "echo"
+    elif canon_lines(gl, sv) == canon_lines(el, sv):     cmp_mode = "transcript"
+    elif [l.lstrip() for l in gin] == [l.lstrip() for l in ein]: cmp_mode = "loose"
+    else:                                                cmp_mode = None
+    return cmp_mode
+
+def syntax_fail(tests, err, variant):
+    return [{"stdin": t.get("stdin",""), "expected": t.get("stdout",""),
+             "got": "", "stderr": err[-400:], "ok": False, "compare": None,
+             "variant": variant} for t in tests]
 
 def verify(starter, code, tests, mode, panel=""):
-    src = code if mode == "full" else splice(starter, code)
+    if not tests:
+        return False, [{"stdin": "", "expected": "", "got": "", "stderr": "no tests derived", "ok": False}]
+    base = code if mode == "full" else splice(starter, code)
+    variants = [("full" if mode == "full" else "spliced", base)]
+    if mode != "full":
+        stripped_starter = "\n".join(l for l in starter.split("\n") if not is_hint_line(l))
+        stripped = splice(stripped_starter, code)
+        if stripped != base:
+            variants.append(("hint-stripped", stripped))
+        if any(is_hint_line(l) for l in base.split("\n")):
+            residue = "\n".join(l for l in base.split("\n") if not is_hint_line(l))
+            if residue != base and residue != stripped:
+                variants.append(("hint-residue", residue))
+        if code.strip() and code != base:
+            variants.append(("standalone", code))
     res = []
-    for t in tests:
-        rc, out, err = run_program(src, t.get("stdin", ""))
-        gl, el = out.splitlines(), (t.get("stdout", "") or "").splitlines()
-        cmp_mode = None
-        if rc == 0:
-            if gl == el:
-                cmp_mode = "strict"
-            elif echo_split(gl, el, panel):
-                cmp_mode = "echo"
-            elif any(gl == v for v in transcript_variants(el, t.get("stdin", ""))):
-                cmp_mode = "transcript"
-        ok = cmp_mode is not None
-        res.append({"stdin": t.get("stdin",""), "expected": t.get("stdout",""),
-                    "got": out, "stderr": err[-400:], "ok": ok, "compare": cmp_mode})
-    passed = all(r["ok"] for r in res)
-    if not passed and mode == "fragment":
-        res_full = []
+    for variant, src in variants:
+        try:
+            compile(src, "<candidate>", "exec")
+        except SyntaxError as e:
+            res = syntax_fail(tests, str(e), variant)
+            continue
+        res = []
         for t in tests:
-            rc, out, err = run_program(code, t.get("stdin", ""))
-            gl, el = out.splitlines(), (t.get("stdout", "") or "").splitlines()
-            cmp_mode = None
-            if rc == 0:
-                if gl == el:
-                    cmp_mode = "strict"
-                elif echo_split(gl, el, panel):
-                    cmp_mode = "echo"
-                elif any(gl == v for v in transcript_variants(el, t.get("stdin", ""))):
-                    cmp_mode = "transcript"
-            ok = cmp_mode is not None
-            res_full.append({"stdin": t.get("stdin",""), "expected": t.get("stdout",""),
-                             "got": out, "stderr": err[-400:], "ok": ok, "compare": cmp_mode})
-        if all(r["ok"] for r in res_full):
-            return True, res_full
-    return passed, res
+            rc, out, err = run_program(src, t.get("stdin", ""))
+            gl = out.replace("\r\n", "\n").replace("\r", "\n").splitlines()
+            el = (t.get("stdout", "") or "").replace("\r\n", "\n").replace("\r", "\n").splitlines()
+            sv = (t.get("stdin", "") or "").replace("\r\n", "\n").replace("\r", "\n").splitlines()
+            cmp_mode = compare_lines(gl, el, sv, panel) if rc == 0 else None
+            ok = rc == 0 and cmp_mode is not None
+            res.append({"stdin": t.get("stdin",""), "expected": t.get("stdout",""),
+                        "got": out, "stderr": err[-400:], "ok": ok, "compare": cmp_mode,
+                        "loose": cmp_mode == "loose", "variant": variant})
+        if all(r["ok"] for r in res):
+            return True, res
+    return False, res
 
 def try_parse(t):
     if not t: return None

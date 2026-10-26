@@ -13,12 +13,21 @@ SOLUTIONS = Path("solutions.jsonl")
 TRIAGE    = Path("triage.jsonl")
 LMSTUDIO_URL = "http://localhost:1234/v1"
 MODEL = ""  # auto-detect
+SENTINELS = {"unknown", "n/a", "null", "none", ""}
 
 JUDGE_PROMPT = """You are a strict grader for a university computer science exam.
-I will give you a question, the options, and an answer chosen by another AI.
-Read the left_panel (theory/context) carefully.
-Determine if the chosen answer is logically correct based on the text or general CS knowledge.
-Reply ONLY with a JSON object: {"agree": true/false, "correct_option": "exact string of the right answer"}"""
+I will give you a question, the options, and the answer(s) chosen by another AI (a list; may be one or several options).
+Read the left_panel (theory/context) carefully. The question may have multiple correct options.
+Determine whether the chosen set is exactly correct: no missing correct option, no wrong option included.
+Reply ONLY with a JSON object: {"agree": true/false, "correct_options": [exact strings of ALL correct options]}"""
+
+def as_list(v):
+    if v is None: return []
+    if isinstance(v, list): return [x for x in v if isinstance(x, str)]
+    if isinstance(v, str): return [v]
+    return []
+
+nset = lambda xs: {re.sub(r"\s+", " ", x).strip().lower() for x in xs}
 
 def try_parse(t):
     if not t: return None
@@ -48,14 +57,14 @@ def main():
         if p["file"] in solved:
             continue
 
-        groq_answer = p["answer"]
+        proposed = as_list(p["answer"])
         user_payload = json.dumps({
             "left_panel": p["left_panel"],
             "options": p["options"],
-            "proposed_answer": groq_answer
+            "proposed_answer": proposed
         }, ensure_ascii=False)
 
-        print(f"Judging {p['qid']} (Groq said: {groq_answer})...")
+        print(f"Judging {p['qid']} (Groq said: {proposed})...")
 
         try:
             r = client.chat.completions.create(
@@ -70,16 +79,37 @@ def main():
             print(f"  [!] API Error: {e}")
             verdict = {}
 
-        if verdict.get("agree") is True:
+        correct = as_list(verdict.get("correct_options", verdict.get("correct_option")))
+        judge_missing = not correct or nset(correct) <= SENTINELS
+        proposer_missing = not proposed or nset(proposed) <= SENTINELS
+        if judge_missing and not proposer_missing:
             out = {"file": p["file"], "qid": p["qid"], "type": "mcq",
-                   "answer": groq_answer, "status": "confirmed", "why": p.get("why", "")}
+                   "answer": proposed, "status": "confirmed", "judge_missing": True,
+                   "why": p.get("why", "")}
+            with SOLUTIONS.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(out, ensure_ascii=False) + "\n")
+            print("  -> CONFIRMED (judge sentinel -> proposer accepted, flagged)")
+            continue
+        if proposer_missing and not judge_missing:
+            out = {"file": p["file"], "qid": p["qid"], "type": "mcq",
+                   "answer": correct, "status": "confirmed", "proposer_missing": True,
+                   "why": p.get("why", "")}
+            with SOLUTIONS.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(out, ensure_ascii=False) + "\n")
+            print("  -> CONFIRMED (proposer sentinel -> judge accepted, flagged)")
+            continue
+        agree = (not judge_missing and not proposer_missing and verdict.get("agree") is True
+                 and (not correct or nset(correct) == nset(proposed)))
+        if agree:
+            out = {"file": p["file"], "qid": p["qid"], "type": "mcq",
+                   "answer": proposed, "status": "confirmed", "why": p.get("why", "")}
             with SOLUTIONS.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(out, ensure_ascii=False) + "\n")
             print("  -> CONFIRMED")
         else:
-            ornith_guess = verdict.get("correct_option", "unknown")
+            ornith_guess = correct
             out = {"file": p["file"], "qid": p["qid"], "type": "mcq",
-                   "groq_answer": groq_answer, "ornith_guess": ornith_guess,
+                   "groq_answer": proposed, "ornith_guess": ornith_guess,
                    "status": "conflict", "options": p["options"]}
             with TRIAGE.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(out, ensure_ascii=False) + "\n")

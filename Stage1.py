@@ -1,5 +1,5 @@
 """
-codepractice pipeline — STAGE 1: extraction v3 (anti-spiral edition)
+CodePractice pipeline — STAGE 1: extraction v3 (anti-spiral edition)
 deps: pip install openai pillow
 """
 import base64, io, json, re, time
@@ -17,7 +17,7 @@ MAX_TOKENS    = 8192        # room to finish thought AND emit JSON
 PIXEL_BUDGET  = 1_500_000   # ~1900 img tokens; knob: raise to 3M only for retakes with tiny digits
 EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 
-SYSTEM_PROMPT = """You are a strict OCR extraction engine. You receive one photo of a laptop screen showing a codepractice page. Return ONLY one valid JSON object: no prose, no markdown fences, no thought blocks. The JSON must be the first and only thing in your reply.
+SYSTEM_PROMPT = """You are a strict OCR extraction engine. You receive one photo of a laptop screen showing a CodePractice page. Return ONLY one valid JSON object: no prose, no markdown fences, no thought blocks. The JSON must be the first and only thing in your reply.
 Schema: {"qid":str,"title":str,"type":"code"|"mcq"|"other","left_panel":str,"options":[str],"filename":str,"starter_code":str,"unclear":[str]}
 Field rules:
 - qid: dotted number at top-left of the content header (e.g. "16.1.1"), no trailing dot.
@@ -30,6 +30,7 @@ Field rules:
 - filename: editor tab name (e.g. "Ifcon01.py"); else "".
 - starter_code: every visible editor line verbatim joined by \\n, INCLUDING highlighted lines and comments; else "".
 - unclear: any word/number you cannot read confidently (blur/glare); else [].
+- Truncation: if a Sample Test Case block (or any block) is visibly cut off at the bottom edge of the photo or the panel fold (its transcript stops mid-interaction), transcribe what IS visible, then append the marker [TRUNCATED] on its own line immediately after it, and add an entry like "Test case 2 cut off at panel edge" to unclear.
 Thinking rules: spend AT MOST one sentence of thought per field. Once a field is decided, NEVER revisit it. If torn between two values, pick one immediately and move on. Never guess unreadable text; put it in unclear. Numbers must be exact."""
 
 DEFAULTS = {"qid":"","title":"","type":"other","left_panel":"",
@@ -40,6 +41,14 @@ def normalize(d):
         return None
     for k, v in DEFAULTS.items():
         d.setdefault(k, list(v) if isinstance(v, list) else v)
+    opts, seen = [], set()
+    for o in d.get("options") or []:
+        if isinstance(o, str):
+            if o in seen:
+                continue
+            seen.add(o)
+        opts.append(o)
+    d["options"] = opts
     if d["type"] != "code" and d["options"]:   # label list + no editor => it's an MCQ
         d["type"] = "mcq"
     return d
@@ -134,7 +143,7 @@ def main():
               f"type={d.get('type','?')} opts={len(d.get('options') or [])} "
               f"img_tok={img_tok} reason_chars={len(reasoning)} ({rec['seconds']}s)")
         if d.get("unclear"):
-            print(f"       unclear: {d['unclear']}  <-- RETAKE THIS PHOTO")
+            print(f"       unclear: {d['unclear']}  <-- (truncation or glare - inspect)")
     print("[done] ledger:", LEDGER)
 
 if __name__ == "__main__":

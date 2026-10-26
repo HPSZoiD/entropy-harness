@@ -1,12 +1,22 @@
 """
-codepractice pipeline — STAGE 2: solve + sandbox-verify
+CodePractice pipeline — STAGE 2: solve + sandbox-verify
 deps: pip install openai
 Solver endpoint via env: SOLVER_BASE_URL / SOLVER_API_KEY / SOLVER_MODEL
 (defaults to local LM Studio — Ornith-1.5-9B is a strong coder, let it reason here)
 """
-import json, os, re, subprocess, sys, tempfile
+import importlib.util, json, os, re, sys
 from pathlib import Path
 from openai import OpenAI
+
+def _load_g2():
+    p = Path(__file__).with_name("groq-Stage2.py").resolve()
+    spec = importlib.util.spec_from_file_location("groq_stage2_standalone", str(p))
+    m = importlib.util.module_from_spec(spec)
+    sys.modules["groq_stage2_standalone"] = m
+    spec.loader.exec_module(m)
+    return m
+
+G2 = _load_g2()
 
 LEDGER, OUT = Path("extractions.jsonl"), Path("solutions.jsonl")
 MAX_ATTEMPTS = 3
@@ -17,7 +27,7 @@ MODEL    = os.environ.get("SOLVER_MODEL", "")
 COMMENT_RE = re.compile(r"^\s*#")
 MATCH_RE   = re.compile(r"^\s*(match\b.*:\s*$|case\b.*:\s*$)")
 
-SOLVE_CODE = """You are completing a Python exercise on codepractice. Input JSON: left_panel (problem verbatim), starter_code (exact editor content; highlighted lines are LOCKED), filename, mode.
+SOLVE_CODE = """You are completing a Python exercise on CodePractice. Input JSON: left_panel (problem verbatim), starter_code (exact editor content; highlighted lines are LOCKED), filename, mode.
 mode="fragment": return ONLY the code that replaces the placeholder comment line(s).
 mode="full": return the COMPLETE program: every starter line verbatim in order (locked lines unchanged), with each placeholder comment replaced by your code.
 Hard rules:
@@ -30,9 +40,9 @@ Hard rules:
 Thinking rules: reason in AT MOST 6 sentences, decide each point once, never revisit. Then emit the JSON object as the very first thing in your reply content.
 Return ONLY JSON: {"code": str, "tests": [{"stdin": str, "stdout": str}], "why": str}"""
 
-TESTGEN = """Given a codepractice problem statement (left_panel) and a finished program (code), produce the exact console tests. For each visible Sample Input/Output copy stdin/stdout verbatim. If none visible, derive from Input/Output Format bullets (every listed case + one invalid/edge). stdout includes any input-prompt echo exactly as samples show. Return ONLY JSON: {"tests": [{"stdin": str, "stdout": str}]}"""
+TESTGEN = """Given a CodePractice problem statement (left_panel) and a finished program (code), produce the exact console tests. For each visible Sample Input/Output copy stdin/stdout verbatim. If none visible, derive from Input/Output Format bullets (every listed case + one invalid/edge). stdout includes any input-prompt echo exactly as samples show. Return ONLY JSON: {"tests": [{"stdin": str, "stdout": str}]}"""
 
-SOLVE_MCQ = """You are answering a codepractice MCQ. Input JSON fields: left_panel (theory + question verbatim), options (answer labels verbatim).
+SOLVE_MCQ = """You are answering a CodePractice MCQ. Input JSON fields: left_panel (theory + question verbatim), options (answer labels verbatim).
 Pick exactly one option. Return ONLY JSON: {"answer": str (copy one option verbatim), "why": str (one sentence)}"""
 
 def try_parse(t):
@@ -98,53 +108,8 @@ def splice(starter: str, code: str) -> str:
     lines[s:e + 1] = cl
     return "\n".join(lines)
 
-def run_program(src, stdin_data, timeout=5):
-    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, encoding="utf-8") as f:
-        f.write(src); path = f.name
-    try:
-        p = subprocess.run([sys.executable, path], input=stdin_data,
-                           capture_output=True, text=True, timeout=timeout)
-        return p.returncode, p.stdout, p.stderr
-    except subprocess.TimeoutExpired:
-        return -1, "", "TIMEOUT"
-    finally:
-        os.unlink(path)
-
-def console_variants(expected: str, stdin_data: str):
-    """Sample stdout is a transcript: 'marks: 78' is prompt + typed value. With piped stdin
-    nothing is echoed, so the program prints 'marks: ' only. Rebuild that transcript."""
-    yield expected
-    vals = [v.strip() for v in (stdin_data or "").splitlines() if v.strip()]
-    if not vals:
-        return
-    v = vals[0]
-    lines = (expected or "").splitlines()
-    out, i = [], 0
-    while i < len(lines):
-        r = lines[i].rstrip()
-        if v and r.endswith(v) and r[:-len(v)].strip():
-            prefix = r[:-len(v)]
-            if i + 1 < len(lines):
-                out.append(prefix + lines[i + 1].lstrip())
-                i += 2
-                continue
-            out.append(prefix)
-        else:
-            out.append(lines[i])
-        i += 1
-    yield "\n".join(out)
-
-def verify(starter, code, tests, mode):
-    src = code if mode == "full" else splice(starter, code)
-    res = []
-    for t in tests:
-        rc, out, err = run_program(src, t.get("stdin", ""))
-        exp = t.get("stdout", "") or ""
-        ok = rc == 0 and any(out.splitlines() == v.splitlines()
-                             for v in console_variants(exp, t.get("stdin", "")))
-        res.append({"stdin": t.get("stdin",""), "expected": exp,
-                    "got": out, "stderr": err[-400:], "ok": ok})
-    return all(r["ok"] for r in res), res
+def verify(starter, code, tests, mode, panel=""):
+    return G2.verify(starter, code, tests, mode, panel=panel)
 
 def main():
     client = OpenAI(base_url=BASE_URL, api_key=API_KEY)

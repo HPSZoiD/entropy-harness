@@ -1,5 +1,5 @@
 """
-codepractice pipeline — PRODUCTION ORCHESTRATOR (main.py)
+CodePractice pipeline — PRODUCTION ORCHESTRATOR (main.py)
 Conductor only: all logic imported from Stage1 / groq-Stage2 / judge_mcqs.
 Flow: extract(local) -> queue -> groq solve+verify(parallel keys) -> judge(local) -> repair pool.
 usage: python main.py --reset   |   python main.py
@@ -32,7 +32,13 @@ F_REPORT = ROOT / "run_report.json"
 F_EX, F_FAIL = getattr(S1, "LEDGER", ROOT / "extractions.jsonl"), getattr(S1, "ERRORS", ROOT / "failed_extractions.jsonl")
 F_SOL, F_TRI = getattr(G2, "SOLUTIONS", ROOT / "solutions.jsonl"), getattr(G2, "TRIAGE", ROOT / "triage.jsonl")
 F_PROP       = getattr(J, "PROPOSALS", ROOT / "mcq_proposals.jsonl")
+SENTINELS = {"unknown", "n/a", "null", "none", ""}
 NUDGE = "Previous attempt died mid-thought. ZERO deliberation: output the JSON object immediately as your first token."
+JUDGE_SYS = """You are a strict grader for a university computer science exam.
+I will give you a question, the options, and the answer(s) chosen by another AI (a list; may be one or several options).
+Read the left_panel (theory/context) carefully. The question may have multiple correct options.
+Determine whether the chosen set is exactly correct: no missing correct option, no wrong option included.
+Reply ONLY with a JSON object: {"agree": true/false, "correct_options": [exact strings of ALL correct options]}"""
 
 # ---------------- shared state ----------------
 WL, SL = threading.Lock(), threading.Lock()
@@ -60,6 +66,11 @@ def append_json(path, obj):
 def read_jsonl(path):
     p = Path(path)
     return [json.loads(l) for l in p.read_text(encoding="utf-8").splitlines() if l.strip()] if p.exists() else []
+def as_list(v):
+    if v is None: return []
+    if isinstance(v, list): return [x for x in v if isinstance(x, str)]
+    if isinstance(v, str): return [v]
+    return []
 
 # ---------------- compat adapters ----------------
 try_parse = getattr(S1, "try_parse", None) or G2.try_parse
@@ -178,24 +189,46 @@ def local_worker():
         raw, rea = "", ""
         try:
             r = client.chat.completions.create(model=model, temperature=0.0, max_tokens=8192,
-                messages=[{"role":"system","content":J.JUDGE_PROMPT},
+                messages=[{"role":"system","content":JUDGE_SYS},
                           {"role":"user","content":json.dumps({"left_panel": item["left_panel"],
                               "options": item["options"], "proposed_answer": item["answer"]}, ensure_ascii=False)}])
             raw = (r.choices[0].message.content or "") or (getattr(r.choices[0].message, "reasoning_content", "") or "")
         except Exception as e:
             log(f"  [judge error] {e}")
+        proposed = as_list(item["answer"])
         v = try_parse(raw) or {}
-        if v.get("agree") is True:
+        correct = as_list(v.get("correct_options", v.get("correct_option")))
+        nset = lambda xs: {re.sub(r"\s+", " ", x).strip().lower() for x in xs}
+        judge_missing = not correct or nset(correct) <= SENTINELS
+        proposer_missing = not proposed or nset(proposed) <= SENTINELS
+        if judge_missing and not proposer_missing:
             bump(mcq_conf=1)
             append_json(F_SOL, {"file": item["file"], "qid": item["qid"], "type": "mcq",
-                                "answer": item["answer"], "status": "confirmed", "why": item.get("why","")})
-            log(f"[judge] {item['qid']} CONFIRMED ({time.time()-t0:.0f}s)")
+                                "answer": proposed, "status": "confirmed", "judge_missing": True,
+                                "why": item.get("why", "")})
+            log(f"[judge] {item['qid']} CONFIRMED (judge sentinel -> proposer accepted, flagged)")
+        elif proposer_missing and not judge_missing:
+            bump(mcq_conf=1)
+            append_json(F_SOL, {"file": item["file"], "qid": item["qid"], "type": "mcq",
+                                "answer": correct, "status": "confirmed", "proposer_missing": True,
+                                "why": item.get("why", "")})
+            log(f"[judge] {item['qid']} CONFIRMED (proposer sentinel -> judge accepted, flagged)")
         else:
-            bump(mcq_conflict=1)
-            append_json(F_TRI, {"file": item["file"], "qid": item["qid"], "type": "mcq",
-                                "groq_answer": item["answer"], "ornith_guess": v.get("correct_option","unknown"),
-                                "status": "conflict", "options": item["options"]})
-            log(f"[judge] {item['qid']} CONFLICT (ornith: {v.get('correct_option','?')})")
+            agree = (not judge_missing and not proposer_missing and v.get("agree") is True
+                     and (not correct or nset(correct) == nset(proposed)))
+            if agree:
+                bump(mcq_conf=1)
+                append_json(F_SOL, {"file": item["file"], "qid": item["qid"], "type": "mcq",
+                                    "answer": proposed, "status": "confirmed",
+                                    "why": item.get("why", "")})
+                log(f"[judge] {item['qid']} CONFIRMED ({len(proposed)} option(s), {time.time()-t0:.0f}s)")
+            else:
+                bump(mcq_conflict=1)
+                append_json(F_TRI, {"file": item["file"], "qid": item["qid"], "type": "mcq",
+                                    "groq_answer": proposed,
+                                    "ornith_guess": correct or v.get("correct_options", "unknown"),
+                                    "status": "conflict", "options": item["options"]})
+                log(f"[judge] {item['qid']} CONFLICT (ornith: {correct})")
 
 def groq_worker(wid, key):
     client = OpenAI(base_url=GROQ_URL, api_key=key)
@@ -208,27 +241,42 @@ def groq_worker(wid, key):
         if d["type"] == "mcq":
             raw, rea = gcall(G2.SOLVE_MCQ, json.dumps({"left_panel": d["left_panel"], "options": d["options"]}, ensure_ascii=False), 2048)
             sol = try_parse(raw) or try_parse(rea) or {}
-            ans = (sol.get("answer") or "").strip(); pick = None
-            if ans:
-                norm = lambda s: re.sub(r"\s+", " ", s).strip().lower()
-                pick = next((o for o in d["options"] if norm(o) == norm(ans)), None) or \
-                       next((o for o in d["options"] if norm(ans) in norm(o) or norm(o) in norm(ans)), None)
-            if not ans or not pick:
+            picks = as_list(sol.get("answers", sol.get("answer")))
+            norm = lambda s: re.sub(r"\s+", " ", s).strip().lower()
+            matched = []
+            for a in picks:
+                a = (a or "").strip()
+                if not a:
+                    continue
+                m = next((o for o in d["options"] if norm(o) == norm(a)), None) or \
+                    next((o for o in d["options"] if norm(a) in norm(o) or norm(o) in norm(a)), None)
+                if m and m not in matched:
+                    matched.append(m)
+            if not picks or not matched:
                 bump(code_triage=1)
                 append_json(F_TRI, {"file": rec["file"], "qid": d["qid"], "type": "mcq",
                                     "reason": "unparseable_or_api_error", "raw": raw})
                 log(f"[K{wid}] {d['qid']} MCQ -> TRIAGE (no valid answer)")
             else:
                 bump(mcq_prop=1)
-                append_json(F_PROP, {"file": rec["file"], "qid": d["qid"], "answer": pick,
-                                     "left_panel": d["left_panel"], "options": d["options"], "why": sol.get("why","")})
-                judge_q.put({"file": rec["file"], "qid": d["qid"], "answer": pick,
-                             "left_panel": d["left_panel"], "options": d["options"], "why": sol.get("why","")})
-                log(f"[K{wid}] {d['qid']} MCQ proposed -> judge queue")
+                append_json(F_PROP, {"file": rec["file"], "qid": d["qid"], "answer": matched,
+                                     "left_panel": d["left_panel"], "options": d["options"],
+                                     "why": sol.get("why", "")})
+                judge_q.put({"file": rec["file"], "qid": d["qid"], "answer": matched,
+                             "left_panel": d["left_panel"], "options": d["options"],
+                             "why": sol.get("why", "")})
+                log(f"[K{wid}] {d['qid']} MCQ proposed {len(matched)} option(s) -> judge queue")
         else:
-            mode = G2.detect_mode(d.get("starter_code", ""))
-            panel = (d.get("left_panel","") or "") + "\n" + (d.get("starter_code","") or "")
-            payload = json.dumps({**{k: d.get(k) for k in ("left_panel","starter_code","filename")}, "mode": mode}, ensure_ascii=False)
+            starter = d.get("starter_code", "")
+            mode = G2.detect_mode(starter)
+            panel = (d.get("left_panel","") or "") + "\n" + starter
+            starter_broken = not G2.starter_compiles(starter)
+            if starter_broken:
+                log(f"[K{wid}] {d['qid']} starter does not compile (OCR scar or platform bug)")
+            payload_obj = {**{k: d.get(k) for k in ("left_panel","starter_code","filename")}, "mode": mode}
+            if starter_broken:
+                payload_obj["starter_broken"] = True
+            payload = json.dumps(payload_obj, ensure_ascii=False)
             raw, rea = gcall(G2.SOLVE_CODE, payload, 8192)
             cand = try_parse(raw) or try_parse(rea) or salvage(raw) or salvage(rea)
             results = None
@@ -282,7 +330,7 @@ def repair_worker(wid, key, rq):
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument("--reset", action="store_true"); args = ap.parse_args()
     if not KEYS:
-        log("[!] no Groq API keys found — set GROQ_API_KEYS (comma-separated) and rerun")
+        log("[!] no Groq API keys found - set GROQ_API_KEYS (comma-separated) and rerun")
         return
     if args.reset:
         for f in (F_EX, F_SOL, F_TRI, F_PROP, F_FAIL, F_REPORT):

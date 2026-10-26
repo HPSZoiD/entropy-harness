@@ -1,0 +1,812 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>HPS LABS — Reference</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Archivo:wght@500;600;700;800&display=swap');
+
+        :root {
+            --bg: #e9e6e0;
+            --dot: rgba(20, 18, 14, .08);
+            --card: #101113;
+            --inset: #0a0b0c;
+            --txt: #f2f0ec;
+            --dim: #8b8f96;
+            --dimmer: #5c6067;
+            --acc: #f04e0f;
+            --ok: #18b981;
+            --warn: #f5b400;
+            --bad: #e5484d;
+            --light: #ddd9d2;
+            --ink: #141210;
+            --r: 14px
+        }
+
+        * {
+            box-sizing: border-box
+        }
+
+        html,
+        body {
+            margin: 0
+        }
+
+        body {
+            background: var(--bg);
+            background-image: radial-gradient(var(--dot) 1px, transparent 1px);
+            background-size: 22px 22px;
+            color: var(--ink);
+            font: 15px/1.55 'Archivo', system-ui, sans-serif
+        }
+
+        .mono {
+            font-family: 'IBM Plex Mono', ui-monospace, Menlo, monospace
+        }
+
+        @keyframes rise {
+            from {
+                opacity: 0;
+                transform: translateY(16px)
+            }
+
+            to {
+                opacity: 1;
+                transform: none
+            }
+        }
+
+        @keyframes swapin {
+            from {
+                opacity: 0;
+                transform: translateY(10px)
+            }
+
+            to {
+                opacity: 1;
+                transform: none
+            }
+        }
+
+        @keyframes pulse {
+            0% {
+                box-shadow: 0 0 0 0 rgba(24, 185, 129, .45)
+            }
+
+            70% {
+                box-shadow: 0 0 0 7px transparent
+            }
+
+            100% {
+                box-shadow: 0 0 0 0 transparent
+            }
+        }
+
+        /* ---------- topbar ---------- */
+        .top {
+            position: sticky;
+            top: 0;
+            z-index: 40;
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            padding: 12px 20px;
+            background: rgba(233, 230, 224, .88);
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid rgba(20, 18, 14, .14)
+        }
+
+        .logo {
+            font: 600 12px/1 'IBM Plex Mono', monospace;
+            letter-spacing: .12em;
+            color: var(--acc)
+        }
+
+
+
+
+
+        .btn {
+            border: none;
+            border-radius: 9px;
+            padding: 10px 14px;
+            font: 600 11px 'IBM Plex Mono', monospace;
+            letter-spacing: .1em;
+            cursor: pointer;
+            transition: transform .15s ease, box-shadow .15s ease
+        }
+
+        .btn:hover {
+            transform: translateY(-1px)
+        }
+
+        .btn:active {
+            transform: translateY(1px)
+        }
+
+        .btn.dark {
+            background: #17181b;
+            color: #fff
+        }
+
+        .btn.orange {
+            background: var(--acc);
+            color: #fff;
+            box-shadow: 0 8px 18px -8px rgba(240, 78, 15, .7)
+        }
+
+        .node { display: none }
+
+        /* ---------- sidebar ---------- */
+        #sidebar {
+            position: fixed;
+            z-index: 35;
+            top: 70px;
+            bottom: 14px;
+            left: 14px;
+            width: 302px;
+            background: var(--card);
+            border-radius: var(--r);
+            box-shadow: 0 30px 60px -25px rgba(20, 18, 14, .5);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            transform: translateX(-120%);
+            transition: transform .45s cubic-bezier(.22, 1, .36, 1)
+        }
+
+        body.sb #sidebar {
+            transform: none
+        }
+
+        #backdrop {
+            position: fixed;
+            inset: 0;
+            z-index: 34;
+            background: rgba(20, 18, 14, .35);
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity .3s
+        }
+
+        .shead {
+            padding: 14px 14px 10px;
+            border-bottom: 1px solid rgba(255, 255, 255, .07)
+        }
+
+        .shead input {
+            width: 100%;
+            background: var(--inset);
+            border: 1px solid rgba(255, 255, 255, .08);
+            border-radius: 8px;
+            color: var(--txt);
+            padding: 9px 12px;
+            font: 500 12px 'IBM Plex Mono', monospace;
+            outline: none
+        }
+
+        .shead input:focus {
+            border-color: var(--acc)
+        }
+
+        #slist {
+            overflow-y: auto;
+            padding: 8px;
+            flex: 1
+        }
+
+        .srow {
+            display: flex;
+            align-items: baseline;
+            gap: 10px;
+            padding: 9px 12px;
+            border-radius: 8px;
+            cursor: pointer;
+            border-left: 2px solid transparent;
+            transition: background .15s
+        }
+
+        .srow:hover {
+            background: rgba(255, 255, 255, .06)
+        }
+
+        .srow.cur {
+            background: rgba(240, 78, 15, .12);
+            border-left-color: var(--acc)
+        }
+
+        .srow.cur .sqid { color: #fff }
+
+        .sqid {
+            font: 600 12px 'IBM Plex Mono', monospace;
+            color: #d6d8db;
+            flex: none
+        }
+
+        .stitle {
+            font: 400 11px 'IBM Plex Mono', monospace;
+            color: var(--dimmer);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis
+        }
+
+        .sempty {
+            padding: 20px;
+            text-align: center;
+            font: 500 11px 'IBM Plex Mono', monospace;
+            letter-spacing: .14em;
+            color: var(--dimmer)
+        }
+
+        /* ---------- layout ---------- */
+        main {
+            max-width: 1180px;
+            margin: 0 auto;
+            padding: 22px 20px 60px;
+            transition: margin .45s cubic-bezier(.22, 1, .36, 1)
+        }
+
+        @media(min-width:1100px) {
+            body.sb main {
+                margin-left: 330px
+            }
+
+            #backdrop {
+                display: none
+            }
+        }
+
+        .qhead {
+            animation: rise .5s cubic-bezier(.22, 1, .36, 1) both
+        }
+
+        .qmeta {
+            display: flex;
+            align-items: center;
+            gap: 12px
+        }
+
+        .qid {
+            font: 600 20px 'IBM Plex Mono', monospace;
+            letter-spacing: .06em
+        }
+
+        .stamp {
+            border: 1.5px solid;
+            border-radius: 6px;
+            padding: 3px 9px;
+            font: 600 10px 'IBM Plex Mono', monospace;
+            letter-spacing: .16em
+        }
+
+        .stamp.ok {
+            color: var(--ok);
+            border-color: var(--ok)
+        }
+
+        .stamp.mcq {
+            color: var(--acc);
+            border-color: var(--acc)
+        }
+
+        .stamp.uns {
+            color: var(--dimmer);
+            border-color: var(--dimmer)
+        }
+
+        .qhead h1 {
+            margin: 8px 0 14px;
+            font-size: 26px;
+            font-weight: 800;
+            letter-spacing: -.01em
+        }
+
+        .qnav {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 18px
+        }
+
+        .qnav button {
+            width: 42px;
+            height: 42px;
+            border: none;
+            border-radius: 10px;
+            background: #17181b;
+            color: #fff;
+            font: 600 16px 'IBM Plex Mono', monospace;
+            cursor: pointer;
+            transition: transform .15s, background .15s
+        }
+
+        .qnav button:hover {
+            transform: translateY(-2px);
+            background: var(--acc)
+        }
+
+        .qnav button:disabled {
+            opacity: .3;
+            transform: none;
+            background: #17181b
+        }
+
+        #prog {
+            font: 500 11px 'IBM Plex Mono', monospace;
+            letter-spacing: .16em;
+            color: var(--dimmer)
+        }
+
+        .cols {
+            display: block
+        }
+
+        #view.swap>* {
+            animation: swapin .32s cubic-bezier(.22, 1, .36, 1) both
+        }
+
+        #view.swap>*:nth-child(2) {
+            animation-delay: .04s
+        }
+
+        /* ---------- cards ---------- */
+        .card {
+            background: var(--card);
+            border-radius: var(--r);
+            border: 1px solid rgba(255, 255, 255, .05);
+            color: var(--txt);
+            box-shadow: 0 24px 48px -22px rgba(20, 18, 14, .45);
+            animation: rise .55s cubic-bezier(.22, 1, .36, 1) both
+        }
+
+        .card+.card {
+            margin-top: 14px
+        }
+
+        .chead {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 14px 16px;
+            border-bottom: 1px solid rgba(255, 255, 255, .07)
+        }
+
+        .ctitle {
+            font: 600 11px 'IBM Plex Mono', monospace;
+            letter-spacing: .16em;
+            color: #fff
+        }
+
+        .ctitle b {
+            color: var(--acc);
+            font-weight: 600
+        }
+
+        .chip {
+            margin-left: auto;
+            border: 1px solid var(--acc);
+            color: var(--acc);
+            border-radius: 6px;
+            padding: 2px 8px;
+            font: 600 10px 'IBM Plex Mono', monospace;
+            letter-spacing: .1em
+        }
+
+
+
+        .code {
+            background: var(--inset);
+            border: 1px solid rgba(255, 255, 255, .06);
+            border-radius: 10px;
+            margin: 14px 16px 16px;
+            padding: 14px 16px;
+            overflow: auto;
+            max-height: 52vh;
+            font: 400 12.5px/1.7 'IBM Plex Mono', monospace;
+            color: #e8e6e1;
+            white-space: pre
+        }
+
+        .code.wrap {
+            white-space: pre-wrap;
+            color: #cfd2d6
+        }
+
+        .mcqans {
+            margin: 16px;
+            padding: 16px;
+            border-radius: 10px;
+            background: var(--inset);
+            border: 1px solid rgba(240, 78, 15, .4);
+            font: 500 13px 'IBM Plex Mono', monospace;
+            color: var(--dim)
+        }
+
+        .mcqans b {
+            display: block;
+            margin-top: 6px;
+            font-size: 17px;
+            color: var(--acc);
+            letter-spacing: .02em
+        }
+
+        ul.opts {
+            list-style: none;
+            margin: 14px 16px 16px;
+            padding: 0;
+            border: 1px solid rgba(255, 255, 255, .08);
+            border-radius: 10px;
+            overflow: hidden
+        }
+
+        ul.opts li {
+            padding: 10px 14px;
+            border-bottom: 1px solid rgba(255, 255, 255, .06);
+            font: 400 12.5px 'IBM Plex Mono', monospace;
+            color: #cfd2d6
+        }
+
+        ul.opts li:last-child {
+            border-bottom: 0
+        }
+
+        ul.opts li.correct {
+            background: rgba(240, 78, 15, .16);
+            color: #fff;
+            font-weight: 600
+        }
+
+        ul.opts li.correct::after {
+            content: "  ◀ ANSWER";
+            color: var(--acc);
+            font-size: 10px;
+            letter-spacing: .14em
+        }
+
+        /* folds */
+        .fhead {
+            display: flex;
+            align-items: center;
+            width: 100%;
+            background: none;
+            border: none;
+            padding: 15px 16px;
+            cursor: pointer
+        }
+
+        .fhead .ctitle {
+            color: #d6d8db
+        }
+
+        .far {
+            margin-left: auto;
+            color: var(--dimmer);
+            font: 500 12px 'IBM Plex Mono', monospace;
+            transition: transform .3s cubic-bezier(.22, 1, .36, 1)
+        }
+
+        .fold.open .far {
+            transform: rotate(90deg);
+            color: var(--acc)
+        }
+
+        .fbody {
+            display: grid;
+            grid-template-rows: 0fr;
+            transition: grid-template-rows .38s cubic-bezier(.22, 1, .36, 1)
+        }
+
+        .fold.open .fbody {
+            grid-template-rows: 1fr
+        }
+
+        .fin {
+            overflow: hidden
+        }
+
+        .fin .code,
+        .fin ul.opts {
+            margin-top: 0
+        }
+
+
+
+        /* drop + footer */
+        #dropview {
+            max-width: 720px;
+            margin: 9vh auto;
+            padding: 0 18px
+        }
+
+        .drop {
+            border: 2px dashed rgba(20, 18, 14, .4);
+            border-radius: 16px;
+            background: rgba(251, 248, 240, .7);
+            padding: 64px 24px;
+            text-align: center;
+            cursor: pointer;
+            font: 600 12px 'IBM Plex Mono', monospace;
+            letter-spacing: .18em;
+            color: var(--ink);
+            transition: border-color .2s, color .2s, transform .2s
+        }
+
+        .drop:hover {
+            border-color: var(--acc);
+            color: var(--acc);
+            transform: translateY(-2px)
+        }
+
+        .drop span {
+            display: block;
+            margin-top: 12px;
+            color: var(--dimmer);
+            font-size: 10.5px;
+            letter-spacing: .14em
+        }
+
+        .note {
+            margin-top: 16px;
+            text-align: center;
+            font: 500 10px 'IBM Plex Mono', monospace;
+            letter-spacing: .16em;
+            color: var(--dimmer)
+        }
+
+        footer {
+            display: flex;
+            justify-content: space-between;
+            gap: 10px;
+            padding: 16px 22px 26px;
+            font: 500 10px 'IBM Plex Mono', monospace;
+            letter-spacing: .16em;
+            color: var(--dimmer)
+        }
+
+        footer b {
+            color: var(--acc)
+        }
+
+        @media(max-width:900px) {
+            .qhead h1 { font-size: 20px }
+            #sidebar { width: 88vw }
+            main { padding: 16px 14px 50px }
+        }
+
+        @media(max-width:600px) {
+            .top { gap: 8px; padding: 10px 14px }
+            .btn { padding: 8px 10px; font-size: 10px }
+            .qhead h1 { font-size: 17px }
+        }
+    </style>
+</head>
+
+<body>
+    <header class="top">
+        <div class="logo">✦ HPS LABS</div>
+        <button class="btn dark" id="sbBtn">☰ INDEX</button>
+        <button class="btn orange" id="loadBtn">⇪ LOAD</button>
+    </header>
+
+    <div id="backdrop"></div>
+    <aside id="sidebar">
+        <div class="shead"><input id="ssearch" placeholder="SEARCH qid / TITLE…  ( / )"></div>
+        <div id="slist"></div>
+    </aside>
+
+    <section id="dropview">
+        <div class="drop" id="drop">LOADING SITE_DATA.JSON…<span>AUTO-LOADS FROM THIS FOLDER · OR DROP FILES
+                HERE</span></div>
+        <p class="note">PARSED IN-BROWSER · NOTHING UPLOADED · NOTHING LOGGED</p>
+    </section>
+
+    <main id="mainview" hidden>
+        <div id="view">
+            <div class="qhead">
+                <div class="qmeta"><span class="qid" id="qid"></span><span class="stamp" id="stamp"></span></div>
+                <h1 id="title"></h1>
+                <div class="qnav"><button id="prev">←</button><span id="prog"></span><button id="next">→</button></div>
+            </div>
+            <div class="cols">
+                <div>
+                    <section class="card">
+                        <div class="chead"><span class="ctitle"><b>&gt;_</b> SOLUTION</span><span class="chip" id="solChip"></span></div>
+                        <pre class="code" id="solcode"></pre>
+                        <div class="mcqans" id="mcqAns" hidden></div>
+                    </section>
+                    <section class="card fold" id="foldProblem">
+                        <button class="fhead"><span class="ctitle"><b>&gt;_</b> PROBLEM STATEMENT</span><span
+                                class="far">▸</span></button>
+                        <div class="fbody">
+                            <div class="fin">
+                                <pre class="code wrap" id="panel"></pre>
+                            </div>
+                        </div>
+                    </section>
+                    <section class="card fold" id="foldOpts">
+                        <button class="fhead"><span class="ctitle"><b>&gt;_</b> OPTIONS</span><span
+                                class="far">▸</span></button>
+                        <div class="fbody">
+                            <div class="fin">
+                                <ul class="opts" id="opts"></ul>
+                            </div>
+                        </div>
+                    </section>
+                    <section class="card fold" id="foldStarter">
+                        <button class="fhead"><span class="ctitle"><b>&gt;_</b> STARTER / LOCKED LINES</span><span
+                                class="far">▸</span></button>
+                        <div class="fbody">
+                            <div class="fin">
+                                <pre class="code wrap" id="starter"></pre>
+                            </div>
+                        </div>
+                    </section>
+                    <section class="card fold" id="foldTests">
+                        <button class="fhead"><span class="ctitle"><b>&gt;_</b> SANDBOX TESTS</span><span
+                                class="far">▸</span></button>
+                        <div class="fbody">
+                            <div class="fin">
+                                <pre class="code wrap" id="tests"></pre>
+                            </div>
+                        </div>
+                    </section>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <footer><span><b>✦</b> HPS LABS</span></footer>
+    <input type="file" id="filein" multiple hidden accept=".json,.jsonl,application/json">
+
+    <script>
+        const $ = id => document.getElementById(id);
+        let ITEMS = [], VIEW = [], IDX = 0; const EX = {}, SOL = {};
+        const esc = s => String(s).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+        const norm = s => String(s).replace(/\s+/g, ' ').trim().toLowerCase();
+        const qkey = q => (q || '').split('.').map(x => parseInt(x, 10) || 0);
+        const pad = n => String(n).padStart(2, '0');
+        const cmp = (a, b) => { const A = qkey(a.qid), B = qkey(b.qid); for (let i = 0; i < 4; i++) { if ((A[i] || 0) !== (B[i] || 0)) return (A[i] || 0) - (B[i] || 0); } return 0; };
+        function mergeEx(d) {
+            const q = d.qid; if (!q) return; const c = EX[q];
+            if (!c) { EX[q] = { qid: q, title: d.title || '', type: d.type || 'other', left_panel: d.left_panel || '', options: (d.options || []).slice(), starter_code: d.starter_code || '', filename: d.filename || '' }; return; }
+            const lp = d.left_panel || '';
+            if (lp && c.left_panel.indexOf(lp) === -1 && lp.indexOf(c.left_panel) === -1) c.left_panel += (c.left_panel ? '\n\n' : '') + lp;
+            if ((d.starter_code || '').length > c.starter_code.length) c.starter_code = d.starter_code;
+            if (!c.options.length && d.options) c.options = d.options.slice();
+            if (!c.filename && d.filename) c.filename = d.filename;
+            if (c.type === 'other' && d.type !== 'other') c.type = d.type;
+            if (!c.title && d.title) c.title = d.title;
+        }
+        function handleDoc(doc) {
+            if (doc && doc.solution && typeof doc.left_panel === 'string') {
+                mergeEx(doc); const s = doc.solution;
+                SOL[doc.qid] = s.kind === 'code' ? { code: s.code, tests: s.tests || [], status: s.status || 'pass' } : { answer: s.answer, status: s.status || 'confirmed' }; return;
+            }
+            const d = (doc && doc.data && typeof doc.data === 'object') ? doc.data : doc; if (!d) return;
+            if((d.status==='pass'||d.status==='confirmed'||d.repaired===true)&&(typeof d.code==='string'||typeof d.answer==='string'||Array.isArray(d.answer))){SOL[d.qid]=d;return;}
+            if (typeof d.left_panel === 'string') mergeEx(d);
+        }
+        function docsFrom(t) {
+            t = t.trim(); try { const o = JSON.parse(t); if (Array.isArray(o)) return o; if (o.items) return o.items; return [o]; } catch (e) { }
+            return t.split(/\r?\n/).filter(l => l.trim()).map(l => { try { return JSON.parse(l) } catch (e) { return null } }).filter(Boolean);
+        }
+        function build() {
+            ITEMS = Object.values(EX).map(ex => {
+                const s = SOL[ex.qid], it = Object.assign({}, ex, { solution: null });
+                if (s) it.solution = (typeof s.code === 'string') ? { kind: 'code', code: s.code, tests: s.tests || [], status: s.status || 'pass' } : { kind: 'mcq', answer: s.answer, status: s.status || 'confirmed' };
+                return it;
+            }).sort(cmp);
+        }
+        /* ---------- filters + sidebar ---------- */
+        function applyFilters(keepQid) {
+            const q = norm($('ssearch').value);
+            VIEW = ITEMS.filter(it => (!q || it.qid.toLowerCase().includes(q) || norm(it.title).includes(q)));
+            if (VIEW.length) { let i = VIEW.findIndex(it => it.qid === (keepQid || '')); IDX = i >= 0 ? i : 0; }
+            renderSidebar(); if (VIEW.length) render(true);
+        }
+        function renderSidebar() {
+            const el = $('slist'); if (!VIEW.length) { el.innerHTML = '<div class="sempty">NO MATCH</div>'; return; }
+            let html = '';
+            VIEW.forEach((it, i) => {
+                const title = (it.title || '').substring(0, 30);
+                html += '<div class="srow' + (i === IDX ? ' cur' : '') + '" data-i="' + i + '">' +
+                    '<span class="sqid">' + esc(it.qid) + '</span>' +
+                    '<span class="stitle">' + esc(title) + '</span>' +
+                    '</div>';
+            });
+            el.innerHTML = html;
+        }
+        $('slist').onclick = e => {
+            const r = e.target.closest('.srow'); if (!r) return; IDX = +r.dataset.i; render(true);
+            if (innerWidth < 1100) document.body.classList.remove('sb');
+        };
+        /* ---------- render ---------- */
+        function render(swap) {
+            const it = VIEW[IDX]; if (!it) return;
+            const ansList = (it.solution && it.solution.kind==='mcq') ? (Array.isArray(it.solution.answer)?it.solution.answer:[it.solution.answer]) : [];
+            $('qid').textContent = it.qid; $('title').textContent = it.title || '(untitled)';
+            const st = $('stamp');
+            if (!it.solution) { st.textContent = 'UNSOLVED'; st.className = 'stamp uns'; }
+            else if (it.solution.kind === 'code') { st.textContent = 'SANDBOX PASS'; st.className = 'stamp ok'; }
+            else { st.textContent = 'CONSENSUS'; st.className = 'stamp mcq'; }
+            $('prog').textContent = pad(IDX + 1) + ' / ' + pad(VIEW.length);
+            $('prev').disabled = IDX === 0; $('next').disabled = IDX === VIEW.length - 1;
+            const isCode = it.solution && it.solution.kind === 'code';
+            $('solChip').textContent = isCode ? ('CODE · ' + ((it.solution.tests || []).length) + ' TESTS') : (it.solution ? 'MCQ' : 'NO DATA');
+            $('solcode').hidden = !isCode; $('mcqAns').hidden = !!isCode;
+            if (isCode) $('solcode').textContent = it.solution.code;
+            else if (it.solution) $('mcqAns').innerHTML='SELECTED OPTIONS<b>'+esc(ansList.join('  |  '))+'</b>';
+            else { $('solcode').hidden = false; $('solcode').textContent = '// no verified solution in ledger'; $('mcqAns').hidden = true; }
+            $('panel').textContent = it.left_panel || '(none)';
+            $('foldProblem').style.display = it.left_panel ? '' : 'none';
+            const hasOpts = it.options && it.options.length;
+            $('foldOpts').style.display = hasOpts ? '' : 'none';
+            if (hasOpts) {
+                $('opts').innerHTML = ''; it.options.forEach((o, i) => {
+                    const li = document.createElement('li');
+                    li.textContent = String.fromCharCode(65 + i) + '. ' + o;
+                    if(ansList.some(a=>norm(a)===norm(o))) li.className='correct'; $('opts').appendChild(li);
+                });
+            }
+            $('foldStarter').style.display = it.starter_code ? '' : 'none';
+            $('starter').textContent = it.starter_code || '';
+            const ts = (it.solution && it.solution.tests) || [];
+            $('foldTests').style.display = ts.length ? '' : 'none';
+            $('tests').textContent = ts.map((t, i) => 'T' + (i + 1) + (t.ok === false ? ' [FAIL]' : ' [ok]') + '\n  in : ' + (t.stdin || '') + '\n  out: ' + (t.stdout || '')).join('\n\n');
+
+            document.querySelectorAll('.srow').forEach(r => r.classList.toggle('cur', +r.dataset.i === IDX));
+            if (swap) { const v = $('view'); v.classList.remove('swap'); void v.offsetWidth; v.classList.add('swap'); }
+        }
+        /* ---------- ingestion ---------- */
+        async function loadFiles(files) {
+            for (const f of files) { const t = await f.text(); docsFrom(t).forEach(handleDoc); }
+            build(); if (!ITEMS.length) { alert('NO USABLE RECORDS IN THOSE FILES'); return; }
+            $('dropview').hidden = true; $('mainview').hidden = false;
+            if (innerWidth >= 1100) document.body.classList.add('sb');
+            applyFilters();
+        }
+        async function autoLoad() {
+            try {
+                const res = await fetch('site_data.json', { cache: 'no-store' });
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                const t = await res.text();
+                docsFrom(t).forEach(handleDoc);
+                build();
+                if (!ITEMS.length) throw new Error('no usable records');
+                $('dropview').hidden = true; $('mainview').hidden = false;
+                if (innerWidth >= 1100) document.body.classList.add('sb');
+                applyFilters();
+            } catch (err) {
+                const note = document.querySelector('#dropview .note');
+                if (note) note.textContent = 'AUTO-LOAD FAILED (' + err.message + ') · DROP FILES MANUALLY';
+            }
+        }
+        /* ---------- wiring ---------- */
+        const drop = $('drop'), filein = $('filein');
+        $('loadBtn').onclick = () => filein.click(); drop.onclick = () => filein.click();
+        filein.onchange = e => loadFiles([...e.target.files]);
+        ['dragover', 'dragenter'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.style.borderColor = 'var(--acc)'; }));
+        ['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.style.borderColor = ''; }));
+        drop.addEventListener('drop', e => loadFiles([...e.dataTransfer.files]));
+        $('sbBtn').onclick = () => document.body.classList.toggle('sb');
+        $('backdrop').onclick = () => document.body.classList.remove('sb');
+        $('prev').onclick = () => { if (IDX > 0) { IDX--; render(true); renderSidebar(); } };
+        $('next').onclick = () => { if (IDX < VIEW.length - 1) { IDX++; render(true); renderSidebar(); } };
+        $('ssearch').oninput = () => applyFilters(VIEW[IDX] && VIEW[IDX].qid);
+        document.querySelectorAll('.fold .fhead').forEach(b => b.onclick = () => b.parentElement.classList.toggle('open'));
+
+        document.addEventListener('keydown', e => {
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+            if (e.key === 'ArrowRight') $('next').click();
+            if (e.key === 'ArrowLeft') $('prev').click();
+            if (e.key === '/') { e.preventDefault(); document.body.classList.add('sb'); $('ssearch').focus(); }
+        });
+
+        autoLoad();
+    </script>
+</body>
+
+</html>
