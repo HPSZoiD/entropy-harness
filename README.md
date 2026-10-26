@@ -1,5 +1,5 @@
 <div align="center">
-  <h1>CODEPRACTICE // AUTOMATED QA PIPELINE</h1>
+  <h1>C0d3t4ntr@ // AUTOMATED QA PIPELINE</h1>
   <p><code>HPS LABS // INTERNAL REFERENCE TOOL</code></p>
   <p>A local-first, multi-tier AI swarm for sandbox-verified code generation and consensus-graded MCQs.</p>
 
